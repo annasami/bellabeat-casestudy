@@ -2,7 +2,7 @@
 title: "Bellabeat Case Study"
 author: "Anna Sami"
 date: "2022-12-22"
-output: html_document
+output: md_document
 ---
 
 #### **Introduction:**
