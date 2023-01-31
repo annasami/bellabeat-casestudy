@@ -1,0 +1,604 @@
+---
+title: "Bellabeat Case Study"
+author: "Anna Sami"
+date: "2022-12-22"
+output: html_document
+---
+
+#### **Introduction:**
+#### Bellabeat makes health-focused smart products (e.g. Leaf, Time, Spring) and offers a subscription for personalized health guidance. 
+
+#### **Statement of business task:**
+#### Analyze smart device usage data in order to gain insight into how consumers use non-Bellabeat smart devices. Public data set for analysis [FitBit Fitness Tracker Data](https://www.kaggle.com/datasets/arashnic/fitbit).
+
+#### **Data for analysis:**
+#### Reliability: Low (sample of 30 FitBit users, gender/age unknown)
+#### Originality: Low (data from third parties via Amazon Mechanical Turk)
+#### License : This dataset is under CC0: Public Domain license
+#### Comprehensive: Medium (daily activity, calories, steps, sleep, weight records)
+#### Current: Medium (data from 2016, habits may have changed slightly)
+#### Cited: High
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r setting-up-environment, results='hide', warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggrepel)
+```
+
+```{r set-time-zone, results='hide'}
+Sys.setlocale("LC_TIME", "English_United States.1252")
+```
+
+```{r import-csv, results='hide'}
+daily_activity <-
+  read.csv("dailyActivity_merged.csv")
+daily_intensities <-
+  read.csv("dailyIntensities_merged.csv")
+daily_steps <-
+  read.csv("dailySteps_merged.csv")
+hourly_calories <-
+  read.csv("hourlyCalories_merged.csv")
+hourly_intensities <-
+  read.csv("hourlyIntensities_merged.csv")
+hourly_steps <-
+  read.csv("hourlySteps_merged.csv")
+sleep_day <-
+  read.csv("sleepDay_merged.csv")
+weight_log_info <-
+  read.csv("weightLogInfo_merged.csv")
+```
+
+***
+#### **Statistics review**
+#### Data inconsistency noted: 33 users in each table but only 24 in sleep_day and 8 in weight_log_info, suggesting manual entry is not best option for users.
+
+```{r distinct-users, results='hide'}
+n_distinct(sleep_day$Id)
+n_distinct(weight_log_info$Id)
+```
+
+```{r sleep_vs_activity-data-merge, results='hide'}
+sleep_day$SleepDay <- mdy_hms(sleep_day$SleepDay)
+daily_activity$ActivityDate <- mdy(daily_activity$ActivityDate)
+
+sleep_vs_activity <- merge(
+  x = daily_activity,
+  y = sleep_day,
+  by.x = c("Id", "ActivityDate"),
+  by.y = c("Id", "SleepDay")
+)
+```
+
+```{r weight-log-info-merge, results='hide'}
+weight_log_info$Date <- mdy_hms(weight_log_info$Date)
+daily_intensities$ActivityDay <- mdy(daily_intensities$ActivityDay)
+
+weight_log_info <-
+  weight_log_info %>%
+  mutate(ActivityDay = date(Date)) %>%
+  merge(daily_intensities, by = c("Id", "ActivityDay"))
+```
+
+```{r calories_intensities_steps_h-merge, results='hide'}
+calories_intensities_steps_h <-
+  merge(hourly_calories,
+        hourly_intensities,
+        by = c("Id", "ActivityHour")) %>%
+  merge(hourly_steps, by = c("Id", "ActivityHour"))
+
+calories_intensities_steps_h$ActivityHour <-
+  mdy_hms(calories_intensities_steps_h$ActivityHour)
+```
+
+```{r data-cleaning, results='hide'}
+sum(is.na(sleep_vs_activity))
+sum(is.na(weight_log_info))
+sum(is.na(calories_intensities_steps_h))
+sum(duplicated(weight_log_info))
+sum(duplicated(sleep_vs_activity))
+sum(duplicated(calories_intensities_steps_h))
+```
+
+```{r data-cleaning-2, results='hide'}
+sleep_vs_activity <- sleep_vs_activity[!duplicated(sleep_vs_activity), ]
+weight_log_info <- weight_log_info[!duplicated(weight_log_info), ]
+```
+
+#### Quick stats summary:
+#### - Most observations were made Tue-Thu, fewest on Mon
+#### - Average daily steps: 8515
+#### - Average sleep duration: 419 min
+#### - Average active minutes: 42 min
+#### - Average sedentary minutes: 712 min
+#### - Low minimum values suggest incorrect tracking, likely due to user forgetfulness.
+
+```{r sleep_vs_activity-statistics-summary}
+sleep_vs_activity %>%
+  mutate(
+    WeekDay = wday(ActivityDate, label = TRUE),
+    ActiveMinutes = VeryActiveMinutes + FairlyActiveMinutes,
+    TimeSpentAwakeInBed = TotalTimeInBed - TotalMinutesAsleep,
+    ActiveDistance = ModeratelyActiveDistance + VeryActiveDistance
+  ) %>%
+  select(
+    WeekDay,
+    TotalSteps,
+    TotalDistance,
+    ActiveDistance,
+    TotalMinutesAsleep,
+    ActiveMinutes,
+    SedentaryMinutes,
+    TimeSpentAwakeInBed
+  ) %>%
+  summary()
+```
+
+#### Statistics summary of weight data entered by users manually. The median weight recorded is 62.5 kg, however, this is not very meaningful because the height, age and gender of users are unknown. A more meaningful measure in this case would be the median BMI value which is 24.39 and the average value is 25.19. This is within the range for Overweight according to the following [BMI categories](https://www.nhlbi.nih.gov/health/educational/lose_wt/BMI/bmicalc.htm):
+#### - Underweight = <18.5
+#### - Normal weight = 18.5–24.9
+#### - Overweight = 25–29.9
+#### - Obesity = BMI of 30 or greater.
+
+```{r weight_log_info-statistics-summary}
+weight_log_info %>% 
+  mutate(WeekDay = wday(ActivityDay, label = TRUE)) %>% 
+  select(WeekDay, BMI, WeightKg) %>% 
+  summary()
+```
+
+#### The Activity by Hour Statistics Summary shows us that the highest number of observations occurred from Tuesday to Thursday and the the lowest number of observations was recorded on Monday.
+
+```{r calories_intensities_steps_h-statistics-summary}
+calories_intensities_steps_h %>% 
+  mutate(WeekDay = wday(ActivityHour, label = TRUE)) %>%
+  select(WeekDay, Calories, TotalIntensity, StepTotal) %>% 
+  summary()
+```
+
+***
+#### **Correlation review**
+#### Examining the correlation between the number of sitting minutes and the number of steps taken per day. The graph displays a weak negative correlation, which indicating that as the number of sedentary minutes increases, the number of steps taken decreases.
+
+```{r sedentary-minutes-vs-total-steps, warning=FALSE, message=FALSE}
+ggplot(data = daily_activity, aes(x = TotalSteps, y = SedentaryMinutes)) +
+  geom_point() +
+  labs(x = "Total Steps", y = "Sedentary Minutes", title = "Sedentary Minutes vs. Total Steps") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+```{r sedentary-minutes-vs-total-steps-cor, results='hide'}
+cor(daily_activity$TotalSteps,
+    daily_activity$SedentaryMinutes,
+    method = "pearson")
+```
+
+#### Examining the connection between the number of steps taken per day and the ease of falling asleep and waking up. This graph compares the number of steps taken and the time spent in bed. The trend line suggests a weak correlation. However, the sample may not be representative, so it cannot be definitively stated that there is no correlation between the number of steps per day and the time spent in bed.
+
+```{r time-spent-awake-vs-sedentrary-minutes-plot, warning=FALSE, message=FALSE}
+sleep_vs_activity %>%
+  mutate(TimeSpentAwake = TotalTimeInBed - TotalMinutesAsleep) %>%
+  ggplot(aes(x = TimeSpentAwake, y = SedentaryMinutes)) +
+  geom_point() +
+  labs(x = "Time Spent In Bed", y = "Sedentary Minutes", title =
+         "Time Spent Awake In Bed vs. Sedentary Minutes") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+#### The scatter plot suggests that the relationship between steps per day and sleep duration is not strong, indicating that other factors may play a more significant role in affecting sleep duration. Further analysis with more comprehensive data and controlled variables is necessary to confirm or disprove this hypothesis.
+
+```{r total-minutes-asleep-vs-total-steps-plot, warning=FALSE, message=FALSE}
+sleep_vs_activity %>%
+  ggplot(aes(x = TotalSteps, y = TotalMinutesAsleep)) +
+  geom_point() +
+  labs(x = "Total Steps", y = "Total Minutes Asleep", title =
+         "Total Minutes Asleep vs. Total Steps") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+#### This observation supports the idea that there is a connection between physical activity and sleep. The correlation suggests that those who get less sleep tend to be less active during the day, which can have a negative impact on overall health and well-being. Further research is needed to fully understand the relationship and potential causes for this correlation.
+
+```{r non-active-inutes-vs-total-minutes-asleep-plot, warning=FALSE, message=FALSE}
+sleep_vs_activity %>%
+  mutate(NonActiveMinutes = SedentaryMinutes + LightlyActiveMinutes) %>%
+  ggplot(aes(x = NonActiveMinutes, y = TotalMinutesAsleep)) +
+  geom_point() +
+  labs(x = "Non-active Minutes", y = "Total Minutes Asleep", title =
+         "Total Minutes Asleep vs. Non-active Minutes") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+#### The correlation supports the idea that increased physical activity leads to increased calorie burn, which can be beneficial for weight management and overall health. However, it's important to note that other factors, such as diet and metabolism, also play a role in calorie burn and should be taken into consideration when evaluating the impact of physical activity on weight and health
+
+```{r active-minutes-vs-calories-plot, warning=FALSE, message=FALSE}
+sleep_vs_activity %>%
+  mutate(ActiveMinutes = VeryActiveMinutes + FairlyActiveMinutes) %>%
+  ggplot(aes(x = ActiveMinutes, y = Calories)) +
+  geom_point() +
+  labs(x = "Active Minutes", y = "Calories", title = "Active Minutes vs. Calories") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+#### The graph shows a slight negative correlation between active minutes per day and body mass index (BMI). However, the number of observations is limited, which means that the correlation might not be significant. Further analysis with a larger sample size is necessary to make a conclusive determination of the relationship between active minutes and BMI.
+
+```{r active-minutes-vs-BMI-plot, warning=FALSE, message=FALSE}
+weight_log_info %>%
+  mutate(ActiveMinutes = VeryActiveMinutes + FairlyActiveMinutes) %>%
+  group_by(Id) %>%
+  summarise(MeanActiveMinutes = mean(ActiveMinutes),
+            MeanBMI = mean(BMI)) %>%
+  ggplot(aes(x = MeanActiveMinutes, y = MeanBMI)) +
+  geom_point() +
+  labs(x = "Average Active Minutes", y = "Average BMI", title = "Active Minutes vs. BMI") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_smooth(
+    method = lm,
+    se = FALSE,
+    col = 'red',
+    linewidth = 1
+  )
+```
+
+***
+#### **Activities by hour**
+#### The average number of calories burned per hour is most active from 16:00 to 19:00 pm. This pattern may suggest that people are more active during the evening and early night hours. However, this should be interpreted with caution as it could also be due to factors such as availability of time and personal preferences for exercising at certain times of the day.
+
+```{r average-calories-per-hour-plot}
+calories_intensities_steps_h %>%
+  select(ActivityHour, Calories) %>%
+  mutate(Hour = hour(ActivityHour)) %>%
+  group_by(Hour) %>%
+  summarise(MeanCalories = mean(Calories)) %>%
+  ggplot() +
+  geom_line(aes(x = Hour, y = MeanCalories), linewidth = 1.3) +
+  scale_x_continuous(breaks = seq(0, 24, 4)) +
+  labs(x = "Hour", y = "Calories", title = "Average Calories Burned per Hour") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### The average number of steps taken per day is highest from 16:00 to 19:00 pm.
+
+```{r average-steps-per-hour-plot}
+calories_intensities_steps_h %>%
+  select(ActivityHour, StepTotal) %>%
+  mutate(Hour = hour(ActivityHour)) %>%
+  group_by(Hour) %>%
+  summarise(mean_steps_per_hour = mean(StepTotal)) %>%
+  ggplot() +
+  geom_line(aes(x = Hour, y = mean_steps_per_hour), linewidth = 1.3) +
+  scale_x_continuous(breaks = seq(0, 24, 4)) +
+  labs(x = "Hour", y = "Steps", title = "Average Steps per Hour") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### The most active hours are from 16:00 to 19:00 pm. Following the latest [scientific research](https://pubmed.ncbi.nlm.nih.gov/35481335/#:~:text=The%20results%20of%2011%20studies,12%20studies%20found%20no%20differences) there is no consistent evidence that physical activity at one time of day provides more favorable health benefits than physical activity at a different time of day. It's important to track the user's habits and encourage consistency in their physical activity.
+
+```{r average-intensity-per-hour-plot}
+calories_intensities_steps_h %>%
+  select(ActivityHour, TotalIntensity) %>%
+  mutate(Hour = hour(ActivityHour)) %>%
+  group_by(Hour) %>%
+  summarise(mean_intesity_per_hour = mean(TotalIntensity)) %>%
+  ggplot() +
+  geom_line(aes(x = Hour, y = mean_intesity_per_hour), linewidth = 1.3) +
+  scale_x_continuous(breaks = seq(0, 24, 4)) +
+  labs(x = "Hour", y = "Intensity", title = "Average Intensity per Hour") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+***
+#### **Activities by day of the week**
+#### The average number of steps reaches peaks of activity on Saturday, quite active days are Monday and Tuesday. The least active day is Sunday.
+
+```{r average-steps-during-the-week-plot}
+sleep_vs_activity %>%
+  select(ActivityDate, TotalSteps) %>%
+  mutate(WeekDay = wday(sleep_vs_activity$ActivityDate, label = TRUE)) %>%
+  group_by(WeekDay) %>%
+  summarise(MeanTotalSteps = mean(TotalSteps)) %>%
+  ggplot(mapping = aes(x = WeekDay,
+                       y = MeanTotalSteps)) +
+  geom_col() +
+  labs(x = "Day Of Week", y = "Steps", title =
+         "Average Steps During the Week") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+#### The most active days in terms of physical activities are Monday and Tuesday, as well as Saturday. The least activity is observed on Wednesday and Friday.
+
+```{r active-minutes-during-the-week-plot}
+sleep_vs_activity %>%
+  select(ActivityDate, VeryActiveMinutes) %>%
+  mutate(WeekDay = wday(sleep_vs_activity$ActivityDate, label = TRUE)) %>%
+  group_by(WeekDay) %>%
+  summarise(MeanActiveMinutes = mean(VeryActiveMinutes)) %>%
+  ggplot(mapping = aes(x = WeekDay,
+                       y = MeanActiveMinutes)) +
+  geom_col() +
+  labs(x = "Day Of Week", y = "Active Minutes", title =
+         "Active Minutes During the Week") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+#### On average, users sleep the most on Sundays and Wednesdays, the least on Thursday.
+
+```{r minutes-asleep-during-the-week-plot}
+sleep_vs_activity %>%
+  select(ActivityDate, TotalMinutesAsleep) %>%
+  mutate(WeekDay = wday(sleep_vs_activity$ActivityDate, label = TRUE)) %>%
+  group_by(WeekDay) %>%
+  summarise(MeanMinutesAsleep = mean(TotalMinutesAsleep)) %>%
+  ggplot(mapping = aes(x = WeekDay,
+                       y = MeanMinutesAsleep)) +
+  geom_col() +
+  labs(x = "Day Of Week", y = "Minutes Asleep", title =
+         "Minutes Asleep During the Week") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+#### Since the most active days in terms of steps taken and training are Monday, Tuesday and Saturday, then the average number of calories burned is the highest on these days.
+
+```{r average-calories-burned-during-the-week-plot}
+sleep_vs_activity %>%
+  select(ActivityDate, Calories) %>%
+  mutate(WeekDay = wday(sleep_vs_activity$ActivityDate, label = TRUE)) %>%
+  group_by(WeekDay) %>%
+  summarise(MeanCalories = mean(Calories)) %>%
+  ggplot(mapping = aes(x = WeekDay,
+                       y = MeanCalories)) +
+  geom_col() +
+  labs(x = "Day Of Week", y = "Calories", title =
+         "Average Calories Burned During the Week") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+#### The most sedentary days are Monday, Tuesday and Friday.
+
+```{r average-sedentary-minutes-during-the-week-plot}
+sleep_vs_activity %>%
+  select(ActivityDate, SedentaryMinutes) %>%
+  mutate(WeekDay = wday(sleep_vs_activity$ActivityDate, label = TRUE)) %>%
+  group_by(WeekDay) %>%
+  summarise(MeanSedentary = mean(SedentaryMinutes)) %>%
+  ggplot(mapping = aes(x = WeekDay,
+                       y = MeanSedentary)) +
+  geom_col() +
+  labs(x = "Day Of Week", y = "Sedentary Minutes", title =
+         "Average Sedentary Minutes During the Week") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+```
+
+***
+#### **Daily Activity**
+#### The average number of active minutes per day is 20 minutes, which is close to the [recommended](https://www.cdc.gov/physicalactivity/basics/adults/index.htm#:~:text=We%20know%20150%20minutes%20of,See%20tips%20for%20getting%20started.) daily amount of physical activity. The median value of light activity is 208 minutes a day. However, users spend 717 minutes sedentary, which is almost 12 hours a day, indicating that there is room for improvement in reducing sedentary time.
+
+```{r creating-percentage-dataframe-for-piechart, results='hide'}
+sleep_vs_activity %>%
+  summarise(
+    MedianVeryActive = median(VeryActiveMinutes),
+    MedianFairlyActive = median(FairlyActiveMinutes),
+    MedianLight = median(LightlyActiveMinutes),
+    MedianSedentary = median(SedentaryMinutes)
+  )
+
+percentage <- data.frame(
+  Level = c("Sedentary", "Lightly", "Fairly", "Very Active"),
+  Minutes = c(717, 208, 11, 9)
+) %>%
+  mutate(
+    csum = rev(cumsum(rev(Minutes))),
+    pos = Minutes / 2 + lead(csum, 1),
+    pos = if_else(is.na(pos), Minutes / 2, pos),
+    percentage = Minutes / sum(Minutes)
+  )
+```
+
+```{r daily-activity-plot}
+ggplot(percentage, aes(x = "" , y = Minutes, fill = fct_inorder(Level))) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Set2") +
+  geom_label_repel(
+    data = percentage,
+    aes(y = pos, label = paste0(Minutes, " min")),
+    size = 5,
+    nudge_x = 1,
+    show.legend = FALSE
+  ) +
+  guides(fill = guide_legend(title = "Activity Level")) +
+  theme_void() +
+  labs(title = "Daily Activity") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r sleep_vs_activity_summ-preparation, results='hide'}
+sleep_vs_activity_summ <- sleep_vs_activity %>%
+  mutate(
+    ActiveDistance = VeryActiveDistance + ModeratelyActiveDistance,
+    ActiveMinutes = VeryActiveMinutes + FairlyActiveMinutes
+  ) %>%
+  group_by(Id) %>%
+  summarise(
+    MedianSteps = median(TotalSteps),
+    MedianDistance = median(TotalDistance),
+    MedianActiveMinutes = median(ActiveMinutes),
+    MedianSedentaryHours = median(SedentaryMinutes) / 60,
+    MedianCalories = median(Calories),
+    MedianHoursAsleep = median(TotalMinutesAsleep) / 60
+  )
+
+sleep_vs_activity_summ$StepsStatus <-
+  with(sleep_vs_activity_summ,
+       ifelse(
+         MedianSteps > 10000,
+         'Good',
+         ifelse(MedianSteps > 7500, 'Medium', 'Low')
+       ))
+
+sleep_vs_activity_summ$ActivityStatus <-
+  with(sleep_vs_activity_summ,
+       ifelse(
+         MedianActiveMinutes > 30,
+         'Good',
+         ifelse(MedianActiveMinutes > 22, 'Medium', 'Low')
+       ))
+
+sleep_vs_activity_summ$SleepStatus <-
+  with(sleep_vs_activity_summ,
+       ifelse(
+         MedianHoursAsleep > 7,
+         'Good',
+         ifelse(MedianActiveMinutes > 6, 'Medium', 'Low')
+       ))
+```
+
+#### Let's take the median values because they are the least dependent on outliers, in this case not all users could track their sleep properly. According to the [article](https://www.cdc.gov/sleep/about_sleep/how_much_sleep.html) an adult (18-60 years old) needs at least 7 hours of sleep a day. However, the age of users is unknown, so the estimate is extremely approximate. Thus, 54.2% of users have a good sleep. 25% of users sleep more than 6 hours and need recommendations based on their individual characteristics. 20.8% of users sleep less than 6 hours and should seriously take care of the problem of sleep or track their sleep properly.
+
+```{r users-sleep-quality-plot}
+sleep_vs_activity_summ %>%
+  group_by(SleepStatus) %>%
+  summarise(SleepQuality = round(100 * n() / nrow(sleep_vs_activity_summ), digits = 1)) %>%
+  mutate(
+    csum = rev(cumsum(rev(SleepQuality))),
+    pos = SleepQuality / 2 + lead(csum, 1),
+    pos = if_else(is.na(pos), SleepQuality / 2, pos),
+    percentage = SleepQuality / sum(SleepQuality)
+  ) %>%
+  ggplot(aes(
+    x = "" ,
+    y = SleepQuality,
+    fill = fct_inorder(SleepStatus)
+  )) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Set2") +
+  geom_label_repel(
+    aes(y = pos, label = paste0(SleepQuality, "%")),
+    size = 5,
+    nudge_x = 1,
+    show.legend = FALSE
+  ) +
+  guides(fill = guide_legend(title = "Quality")) +
+  theme_void() +
+  labs(title = "Users Sleep Quality") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### Following the [article](https://www.medicalnewstoday.com/articles/how-many-steps-should-you-take-a-day) 10,000 steps is the goal we should strive for, but this figure may vary depending on age, gender and goals. 7 500 - 8 000 steps are also a realistic goal for adults. Thus, 25% of users exceed 10,000 or more steps per day. 33.3% complete more than 7,500 steps a day and 41.7% of users need recommendations.
+
+```{r users-steps-number-plot}
+sleep_vs_activity_summ %>%
+  group_by(StepsStatus) %>%
+  summarise(StepsQuality = round(100 * n() / nrow(sleep_vs_activity_summ), digits = 1)) %>%
+  mutate(
+    csum = rev(cumsum(rev(StepsQuality))),
+    pos = StepsQuality / 2 + lead(csum, 1),
+    pos = if_else(is.na(pos), StepsQuality / 2, pos),
+    percentage = StepsQuality / sum(StepsQuality)
+  ) %>%
+  ggplot(aes(
+    x = "" ,
+    y = StepsQuality,
+    fill = fct_inorder(StepsStatus)
+  )) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Set2") +
+  geom_label_repel(
+    aes(y = pos, label = paste0(StepsQuality, "%")),
+    size = 5,
+    nudge_x = 1,
+    show.legend = FALSE
+  ) +
+  guides(fill = guide_legend(title = "Quality")) +
+  theme_void() +
+  labs(title = "Users Steps Number") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### 45.8% of users have a median value of active minutes per day of more than 30. 4.2% of users have a median value of active minutes per day of more than 22, which is also not bad and such users should be encouraged for consistency. 50% of users have a median value of less than 22 active minutes per day and need recommendations.
+
+```{r users-activity-plot}
+sleep_vs_activity_summ %>%
+group_by(ActivityStatus) %>%
+  summarise(ActivityQuality = round(100 * n() / nrow(sleep_vs_activity_summ), digits = 1)) %>%
+  mutate(
+    csum = rev(cumsum(rev(ActivityQuality))),
+    pos = ActivityQuality / 2 + lead(csum, 1),
+    pos = if_else(is.na(pos), ActivityQuality / 2, pos),
+    percentage = ActivityQuality / sum(ActivityQuality)
+  ) %>%
+  ggplot(aes(
+    x = "" ,
+    y = ActivityQuality,
+    fill = fct_inorder(ActivityStatus)
+  )) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "Set2") +
+  geom_label_repel(
+    aes(y = pos, label = paste0(ActivityQuality, "%")),
+    size = 5,
+    nudge_x = 1,
+    show.legend = FALSE
+  ) +
+  guides(fill = guide_legend(title = "Quality")) +
+  theme_void() +
+  labs(title = "Users Activity") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+***
+#### **Conclusions:**
+#### 1) We need updated observations and information about users.
+#### 2) It's necessary to provide a way for users to add weight information, such as with smart scales.
+#### 3) Send reminders to users to encourage regular activity, normal sleep and more steps. Encourage consistency among those who are already active.
+#### 4) 54% of users require serious recommendations regarding their health.
+#### 5) Remind users to wear the bracelet regularly.
+
+
+
+
+
+
