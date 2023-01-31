@@ -38,21 +38,21 @@ Sys.setlocale("LC_TIME", "English_United States.1252")
 
 ```{r import-csv, results='hide'}
 daily_activity <-
-  read.csv("dailyActivity_merged.csv")
+  read.csv("data/dailyActivity_merged.csv")
 daily_intensities <-
-  read.csv("dailyIntensities_merged.csv")
+  read.csv("data/dailyIntensities_merged.csv")
 daily_steps <-
-  read.csv("dailySteps_merged.csv")
+  read.csv("data/dailySteps_merged.csv")
 hourly_calories <-
-  read.csv("hourlyCalories_merged.csv")
+  read.csv("data/hourlyCalories_merged.csv")
 hourly_intensities <-
-  read.csv("hourlyIntensities_merged.csv")
+  read.csv("data/hourlyIntensities_merged.csv")
 hourly_steps <-
-  read.csv("hourlySteps_merged.csv")
+  read.csv("data/hourlySteps_merged.csv")
 sleep_day <-
-  read.csv("sleepDay_merged.csv")
+  read.csv("data/sleepDay_merged.csv")
 weight_log_info <-
-  read.csv("weightLogInfo_merged.csv")
+  read.csv("data/weightLogInfo_merged.csv")
 ```
 
 ***
